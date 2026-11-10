@@ -1,0 +1,22 @@
+[Unit]
+Description=NextVPI standalone mail server (VK Callback API)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=nextvpi
+Group=nextvpi
+WorkingDirectory=/opt/nextvpi
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node --env-file=/opt/nextvpi/mail/.env /opt/nextvpi/mail/dist/server.js
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nextvpi
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
