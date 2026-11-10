@@ -66,6 +66,7 @@ export interface VkOutgoingMessagePayload {
 }
 
 export interface Player {
+  isConfirmed: boolean;
   heroName: string;
   vkId: number;
   vkName: string;

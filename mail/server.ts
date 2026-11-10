@@ -4,7 +4,16 @@ import http from "node:http";
 import https from "node:https";
 import path from 'node:path';
 
-import { LetterProcessingError, CommandProcessingError, type Letter, type VKMessage, type Player, type Settings, type VKMessageNewEvent, VkOutgoingMessagePayload } from './interfaces';
+import {
+    LetterProcessingError, 
+    CommandProcessingError, 
+    type Letter, 
+    type VKMessage, 
+    type Player, 
+    type Settings, 
+    type VKMessageNewEvent, 
+    VkOutgoingMessagePayload,
+} from './interfaces';
 
 const VK_API_VERSION = '5.199';
 const VK_API_URL = 'https://api.vk.com/method/';
@@ -65,53 +74,37 @@ class FileHelper {
 }
 
 enum KeyboardCommands {
+    START = 'start',
     PLAYERS_LIST = 'players_list',
     NEXT_TURN = 'next_turn',
     PREVIOUS_TURN = 'previous_turn',
     CURRENT_TURN = 'current_turn',    
 }
 
+function addButton(label: string, command: KeyboardCommands) {
+    return {
+        'action': {
+            'type': 'text',
+            'label': label,
+            'payload': `{\"cmd\":\"${command}\"}`
+        },
+        'color': 'secondary'
+    }
+}
+
 function createKeyboard(isAdmin: boolean = false) {
     const playerButtons = [
         [
-            {
-                'action': {
-                    'type': 'text',
-                    'label': 'Список получателей',
-                    'payload': `{\"cmd\":\"${KeyboardCommands.PLAYERS_LIST}\"}`
-                },
-                'color': 'secondary'
-            }
+            addButton('Список получателей', KeyboardCommands.PLAYERS_LIST),
         ]
     ];
 
     const adminButtons = [
         ...playerButtons,
         [
-            {
-                'action': {
-                    'type': 'text',
-                    'label': 'Предыдущий ход',
-                    'payload': `{\"cmd\":\"${KeyboardCommands.PREVIOUS_TURN}\"}`
-                },
-                'color': 'secondary'
-            },
-            {
-                'action': {
-                    'type': 'text',
-                    'label': 'Текущий ход',
-                    'payload': `{\"cmd\":\"${KeyboardCommands.CURRENT_TURN}\"}`
-                },
-                'color': 'secondary'
-            },
-            {
-                'action': {
-                    'type': 'text',
-                    'label': 'Следующий ход',
-                    'payload': `{\"cmd\":\"${KeyboardCommands.NEXT_TURN}\"}`
-                },
-                'color': 'secondary'
-            }
+            addButton('Предыдущий ход', KeyboardCommands.PREVIOUS_TURN),
+            addButton('Текущий ход', KeyboardCommands.CURRENT_TURN),
+            addButton('Следующий ход', KeyboardCommands.NEXT_TURN),
         ]
     ];
 
@@ -123,8 +116,9 @@ function createKeyboard(isAdmin: boolean = false) {
 }
 
 class CommandExecutor {
-    static commandRouter(command: KeyboardCommands): string { 
-        const router: Record<KeyboardCommands, () => string | number> = {
+    static commandRouter(command: KeyboardCommands, from_id: number): string { 
+        const router: Record<KeyboardCommands, (from_id?: number) => string | number> = {
+            [KeyboardCommands.START]: CommandExecutor.confirmStart,
             [KeyboardCommands.PLAYERS_LIST]: CommandExecutor.getPlayersList,
             [KeyboardCommands.NEXT_TURN]: CommandExecutor.setNextTurn,
             [KeyboardCommands.PREVIOUS_TURN]: CommandExecutor.setPreviousTurn,
@@ -133,10 +127,24 @@ class CommandExecutor {
 
         const handler = router[command];
         if (typeof handler === 'function') {
-            return handler()?.toString();
+            return handler(from_id).toString();
         }
 
         throw new CommandProcessingError('Команда не найдена');
+    }
+
+    static confirmStart(from_id?: number): string {
+        const players = FileHelper.readJson(PLAYERS_BASE_FILEPATH) as Array<Player>;
+        const player = players.find((player) => player.vkId == from_id);
+
+        if (!player) {
+            throw new CommandProcessingError('Игрок не найден')
+        } 
+
+        player.isConfirmed = true;
+        FileHelper.writeJson(PLAYERS_BASE_FILEPATH, players)
+
+        return 'Персонаж подтверждён';
     }
 
     static getPlayersList(): string {
@@ -150,7 +158,7 @@ class CommandExecutor {
         return settings.CURRENT_TURN;
     }
 
-    static setPreviousTurn() {
+    static setPreviousTurn(): number {
         const settings = FileHelper.readSettings(SETTINGS_FILEPATH) as Settings;
         const currentTurn = settings.CURRENT_TURN;
         if (currentTurn - 1 <= 0) {
@@ -162,7 +170,7 @@ class CommandExecutor {
         return settings['CURRENT_TURN'];
     }
 
-    static setNextTurn() {
+    static setNextTurn(): number {
         const settings = FileHelper.readSettings(SETTINGS_FILEPATH) as Settings;
         settings['CURRENT_TURN'] = +settings['CURRENT_TURN'] + 1;
         FileHelper.writeSettings(settings);
@@ -247,6 +255,11 @@ function vkApiMessageSend(message: VkOutgoingMessagePayload): Promise<Record<str
     });
 }
 
+interface ProcessLetterResult {
+    currentTurn: number;
+    currentTurnLetters: number;
+}
+
 class MessageHandler {
     async processMessage(vkMessageEvent: VKMessageNewEvent, response: http.ServerResponse) {
         if (vkMessageEvent.type === 'confirmation') {
@@ -270,18 +283,18 @@ class MessageHandler {
                 if (message.payload) {
                     const command = JSON.parse(message.payload);
                     if (command.cmd) {
-                        const result = CommandExecutor.commandRouter(command.cmd);
+                        const result = CommandExecutor.commandRouter(command.cmd, message.from_id);
                         await vkApiMessageSend({
                             peer_id: message.from_id,
                             message: result,
                         })                    
                     }
                 } else {
-                    await this.processLetter(message);
+                    const result = await this.processLetter(message);
 
                     await vkApiMessageSend({
                         peer_id: message.from_id,
-                        message: 'Сообщение отправлено!',
+                        message: `Сообщение отправлено! Ход: ${result.currentTurn}, отправлено писем: ${result.currentTurnLetters}.`,
                     })
                 }
             } catch (err: unknown) {
@@ -295,7 +308,7 @@ class MessageHandler {
         }
     }
 
-    async processLetter(rawMessage: VKMessage): Promise<void> {
+    async processLetter(rawMessage: VKMessage): Promise<ProcessLetterResult> {
       const settings = FileHelper.readSettings(SETTINGS_FILEPATH) as Settings;
       const players = FileHelper.readJson(PLAYERS_BASE_FILEPATH) as Array<Player>;
 
@@ -321,6 +334,8 @@ class MessageHandler {
       });
 
       FileHelper.writeJson(PLAYERS_BASE_FILEPATH, players);
+
+      return { currentTurn: settings.CURRENT_TURN, currentTurnLetters: playerSender.letters.length }
    }
 
     createLetter(rawMessage: VKMessage, players: Array<Player>, settings: Settings): Letter {
@@ -334,6 +349,10 @@ class MessageHandler {
       if (!playerRecepient) {
         throw new LetterProcessingError('Получатель с таким именем не найден');
       } 
+
+      if (!playerRecepient.isConfirmed) {
+        throw new LetterProcessingError('Получатель пока не может принимать письма, необходимо подтверждение игрока');
+      }
 
       return {
         fromId: rawMessage.from_id,
