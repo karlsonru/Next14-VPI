@@ -149,7 +149,7 @@ class CommandExecutor {
 
     static getPlayersList(): string {
         const players = FileHelper.readJson(PLAYERS_BASE_FILEPATH) as Array<Player>;
-        return players.map((player) => `${player.heroName} (${player.vkName})`).join('\n');
+        return players.filter((player) => player.isConfirmed).map((player) => `${player.heroName} (${player.vkName})`).join('\n');
     }
 
     static getCurrentTurn(): number {
@@ -354,10 +354,16 @@ class MessageHandler {
         throw new LetterProcessingError('Получатель пока не может принимать письма, необходимо подтверждение игрока');
       }
 
+      const playerSender = players.find((player) => player.vkId == rawMessage.from_id);
+      if (!playerSender) {
+        throw new LetterProcessingError('Неизвестный отправитель');
+      }
+
       return {
         fromId: rawMessage.from_id,
+        fromName: playerSender.heroName, 
         toId: playerRecepient.vkId,
-        toName: recepientName,
+        toName: playerRecepient.heroName,
         text: rawMessage.text,
         turn: settings.CURRENT_TURN,
       }
@@ -366,7 +372,7 @@ class MessageHandler {
     async sendLetter(letter: Letter) {
         const payload = {
             peer_id: letter.toId,
-            message: letter.text,
+            message: letter.text + '\n' + letter.fromName,
             keyboard: createKeyboard(),
         }
 

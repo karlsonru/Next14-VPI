@@ -54,6 +54,7 @@ export interface VKMessageNewEvent {
 
 export interface Letter {
   fromId: number;
+  fromName: string;
   toId: number;
   toName: string;
   turn: number;
