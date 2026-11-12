@@ -86,7 +86,7 @@ function addButton(label: string, command: KeyboardCommands) {
         'action': {
             'type': 'text',
             'label': label,
-            'payload': `{\"cmd\":\"${command}\"}`
+            'payload': `{\"command\":\"${command}\"}`
         },
         'color': 'secondary'
     }
@@ -124,6 +124,8 @@ class CommandExecutor {
             [KeyboardCommands.PREVIOUS_TURN]: CommandExecutor.setPreviousTurn,
             [KeyboardCommands.CURRENT_TURN]: CommandExecutor.getCurrentTurn,
         }
+        
+        FileHelper.writeLog(`Executing command: ${command} from ${from_id}}`);
 
         const handler = router[command];
         if (typeof handler === 'function') {
@@ -276,18 +278,23 @@ class MessageHandler {
             response.end('ok');
 
             const message = vkMessageEvent.object.message;
+            // сообщение из группповых бесед - игнорируем
+            if (message.peer_id >= 2000000000) {
+                return;
+            }
+
             FileHelper.writeLog(`Processing new vk message from ${message.peer_id}`);
 
             try {    
                 // выполняем команду
                 if (message.payload) {
-                    const command = JSON.parse(message.payload);
-                    if (command.cmd) {
-                        const result = CommandExecutor.commandRouter(command.cmd, message.from_id);
+                    const payload = JSON.parse(message.payload);
+                    if (payload.command) {
+                        const result = CommandExecutor.commandRouter(payload.command, message.from_id);
                         await vkApiMessageSend({
                             peer_id: message.from_id,
                             message: result,
-                        })                    
+                        });
                     }
                 } else {
                     const result = await this.processLetter(message);
@@ -319,7 +326,7 @@ class MessageHandler {
         throw new LetterProcessingError('Неизвестный отправитель');
       }
 
-      const currentTurnLetters = playerSender.letters.filter((letter) => letter.turn == settings.CURRENT_TURN);
+      const currentTurnLetters = playerSender.letters.filter((letter) => letter.turn == settings.CURRENT_TURN) || 1;
       if (currentTurnLetters && currentTurnLetters.length == settings.LETTERS_PER_TURN) {
         throw new LetterProcessingError(`Достигнут лимит писем (${settings.LETTERS_PER_TURN})`);
       }
@@ -335,7 +342,7 @@ class MessageHandler {
 
       FileHelper.writeJson(PLAYERS_BASE_FILEPATH, players);
 
-      return { currentTurn: settings.CURRENT_TURN, currentTurnLetters: playerSender.letters.length }
+      return { currentTurn: settings.CURRENT_TURN, currentTurnLetters: currentTurnLetters.length }
    }
 
     createLetter(rawMessage: VKMessage, players: Array<Player>, settings: Settings): Letter {
