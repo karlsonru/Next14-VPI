@@ -1,0 +1,68 @@
+name: Deploy nextvpi server
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nextvpi-server
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS; do
+            if [ -z "${!name}" ]; then
+              echo "Missing GitHub Actions secret: $name" >&2
+              exit 1
+            fi
+          done
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/deploy_key" "$HOME/.ssh/known_hosts"
+
+      - name: Package tracked code
+        run: |
+          set -euo pipefail
+          git ls-files -z |
+            grep -zv -e '^mail/players.json$' -e '^mail/settings.conf$' |
+            tar --null -T - -czf "$RUNNER_TEMP/nextvpi.tar.gz"
+
+      - name: Copy code and restart service
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          ssh_options=(-i "$HOME/.ssh/deploy_key" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
+          target="${DEPLOY_USER}@${DEPLOY_HOST}"
+          remote_dir=$(ssh "${ssh_options[@]}" "$target" 'mktemp -d')
+          scp "${ssh_options[@]}" "$RUNNER_TEMP/nextvpi.tar.gz" "$target:$remote_dir/code.tar.gz"
+          ssh "${ssh_options[@]}" "$target" "bash -se -- '$remote_dir'" <<'REMOTE'
+          set -euo pipefail
+          remote_dir=$1
+          trap 'rm -rf -- "$remote_dir"' EXIT
+          cd /opt/nextvpi
+          tar -xzf "$remote_dir/code.tar.gz"
+          npm ci --include=dev
+          npm run server:build
+          sudo -n systemctl restart nextvpi.service
+          sudo -n systemctl is-active --quiet nextvpi.service
+          REMOTE
