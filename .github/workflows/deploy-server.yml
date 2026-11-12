@@ -14,10 +14,10 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Prepare SSH
         env:
@@ -37,6 +37,12 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/deploy_key"
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/deploy_key" "$HOME/.ssh/known_hosts"
+          if ! ssh-keygen -y -P '' -f "$HOME/.ssh/deploy_key" > "$RUNNER_TEMP/deploy_key.pub"; then
+            echo 'DEPLOY_SSH_KEY must be a valid private key without a passphrase' >&2
+            exit 1
+          fi
+          echo 'Deploy public key fingerprint:'
+          ssh-keygen -lf "$RUNNER_TEMP/deploy_key.pub"
 
       - name: Package tracked code
         run: |
@@ -51,7 +57,7 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
           set -euo pipefail
-          ssh_options=(-i "$HOME/.ssh/deploy_key" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
+          ssh_options=(-i "$HOME/.ssh/deploy_key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15)
           target="${DEPLOY_USER}@${DEPLOY_HOST}"
           remote_dir=$(ssh "${ssh_options[@]}" "$target" 'mktemp -d')
           scp "${ssh_options[@]}" "$RUNNER_TEMP/nextvpi.tar.gz" "$target:$remote_dir/code.tar.gz"
