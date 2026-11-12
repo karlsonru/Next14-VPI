@@ -19,7 +19,7 @@ const VK_API_VERSION = '5.199';
 const VK_API_URL = 'https://api.vk.com/method/';
 const VK_API_CONFIRMATION_TOKEN = process.env.VK_API_CONFIRMATION_TOKEN;
 const VK_API_ACCESS_TOKEN = process.env.VK_API_ACCESS_TOKEN;
-const VK_ADMIN_IDS = [1890724];
+const VK_ADMIN_IDS = [1890724, 356140335];
 
 if (!VK_API_CONFIRMATION_TOKEN || !VK_API_ACCESS_TOKEN) {
     throw new Error(`Отсутствуют переменные окружения VK_API_ACCESS_TOKEN или VK_API_CONFIRMATION_TOKEN`);
@@ -61,7 +61,7 @@ class FileHelper {
     }
 
     static writeJson(filepath: string, content: object): void {
-        const json = JSON.stringify(content);
+        const json = JSON.stringify(content, null, 4) + '\n';
         this.writeFile(filepath, json);
     }
 
@@ -326,8 +326,8 @@ class MessageHandler {
         throw new LetterProcessingError('Неизвестный отправитель');
       }
 
-      const currentTurnLetters = playerSender.letters.filter((letter) => letter.turn == settings.CURRENT_TURN) || 1;
-      if (currentTurnLetters && currentTurnLetters.length == settings.LETTERS_PER_TURN) {
+      const currentTurnLetters = playerSender.letters.filter((letter) => letter.turn == settings.CURRENT_TURN);
+      if (currentTurnLetters.length >= settings.LETTERS_PER_TURN) {
         throw new LetterProcessingError(`Достигнут лимит писем (${settings.LETTERS_PER_TURN})`);
       }
 
@@ -342,7 +342,7 @@ class MessageHandler {
 
       FileHelper.writeJson(PLAYERS_BASE_FILEPATH, players);
 
-      return { currentTurn: settings.CURRENT_TURN, currentTurnLetters: currentTurnLetters.length }
+      return { currentTurn: settings.CURRENT_TURN, currentTurnLetters: currentTurnLetters.length + 1 }
    }
 
     createLetter(rawMessage: VKMessage, players: Array<Player>, settings: Settings): Letter {
